@@ -542,6 +542,31 @@ refreshAll();
   server.send(200, "text/html", PAGE);
 }
 
+// =============================================================
+// COMMUNICATION — Web UI (Wi-Fi AP + HTTP server)
+// =============================================================
+// The ESP32 runs as an Access Point (AP_SSID, open password) and hosts a
+// lightweight HTTP UI used for:
+//
+// 1) Control plane:
+//    - POST /api/state with infer=0/1 and save=0/1
+//      -> toggles g_infer_enabled and g_save_enabled
+//
+// 2) Telemetry (live stats):
+//    - GET /api/state returns JSON:
+//        { infer, save, bees, mites, avg_weighted }
+//
+// 3) Data browsing:
+//    - GET /api/boots  lists boot session folders
+//    - GET /api/images lists images within selected boot session
+//    - GET /sd?path=... streams images from SD for preview
+//
+// Safety:
+//    - safe_path() restricts SD file serving to /overlays and /bee_overlays.
+//    - no-cache headers prevent stale UI views.
+// =============================================================
+
+
 void sd_web_ui_begin() {
   static bool started = false;
   if (started) return;

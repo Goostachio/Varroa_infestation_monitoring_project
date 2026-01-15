@@ -76,6 +76,42 @@ static uint32_t last_infer_ms = 0;
 
 static constexpr int JPEG_QUALITY = 100;
 
+// =============================================================
+// REPORT NOTES — PIPELINE OVERVIEW (2-stage)
+// =============================================================
+//
+// Goal: Detect bees in a full camera frame (Stage 1), then run a second
+// model on per-bee crops to detect Varroa mites (Stage 2).
+//
+// Inputs:
+//   - OV2640 camera provides SXGA (1280x1024) JPEG frames.
+//   - Stage 1 model (bee detector) expects EI_CLASSIFIER_INPUT_WIDTH/HEIGHT RGB.
+//   - Stage 2 model (varroa detector) expects EI_VARROA_INPUT_WIDTH/HEIGHT RGB.
+//
+// Outputs (SD card artifacts):
+//   1) /frames/boot_xxxxxx/NNNNNN.jpg        (raw full frame JPEG)
+//   2) /frames/boot_xxxxxx/NNNNNN.txt        (bee centers + scores + labels)
+//   3) /bee_overlays/boot_xxxxxx/NNNNNN.jpg  (Stage-1 input + center markers)
+//   4) /crops/boot_xxxxxx/*.jpg              (160x160 bee-centered crops)
+//   5) /overlays/boot_xxxxxx/mite/*.jpg      (varroa overlays if mites found)
+//   6) /overlays/boot_xxxxxx/no_mite/*.jpg   (crops copied when no mites)
+//
+// Key metrics:
+//   - bees_this: number of bee detections in current frame (>= UI_THRESH)
+//   - mites_this: number of varroa detections across all crops (> VAR_THRESH)
+//   - avg_weighted = 100 * total_mites / total_bees  (boot-level weighted metric)
+//
+// Control flags (from Web UI):
+//   - g_infer_enabled: start/stop inference loop (kept false initially so UI loads)
+//   - g_save_enabled : enable/disable SD writes (browse mode vs capture mode)
+//
+// Alerts / communication:
+//   - NeoPixel LED indicates infestation using avg_weighted threshold.
+//   - Web UI shows live stats and provides SD browsing of saved images.
+//   - SD log records all detections, counters, and per-boot metadata.
+// =============================================================
+
+
 // ================================
 // Global State / Buffers
 // ================================
@@ -198,6 +234,21 @@ static bool write_u32_file(const char* path, uint32_t v) {
   f.close();
   return true;
 }
+
+// =============================================================
+// COMMUNICATION — SD logging (audit trail / traceability)
+// =============================================================
+// sdlog_printf() writes structured logs to both Serial (optional) and SD log file.
+// This is used to record:
+//   - Per-frame inference events (cycle start, capture success/failure)
+//   - Stage 1 detections and bounding boxes
+//   - Crop generation status and paths
+//   - Stage 2 detections and overlay/copy results
+//   - Counters, round summaries, and avg_weighted
+//
+// This provides reproducibility and offline analysis after deployment.
+// =============================================================
+
 
 static void sdlog_printf(const char* fmt, ...) {
   char buf[384];
@@ -345,6 +396,18 @@ static void led_set_rgb(uint8_t r, uint8_t g, uint8_t b) {
   strip.setPixelColor(0, strip.Color(r, g, b));
   strip.show();
 }
+
+// =============================================================
+// ALERT MECHANISM — NeoPixel status indicator
+// =============================================================
+// The device provides a simple on-hardware alert:
+//   - Compute avg_weighted = 100 * total_mites / total_bees
+//   - If avg_weighted > LED_INFEST_THRESH_PCT  => LED = RED  (high infestation)
+//   - Else                                     => LED = GREEN (normal)
+//
+// This allows operation without a phone/PC UI in the field.
+// =============================================================
+
 
 static void led_update_from_avg_weighted(bool force = false) {
   const double avg_w = avg_weighted_pct_boot();
@@ -730,6 +793,34 @@ static void ei_calc_crop_map(int src_w, int src_h, int dst_w, int dst_h,
   scale_y = (float)crop_h / (float)dst_h;
 }
 
+// =============================================================
+// PREPROCESSING (Stage 1 coords -> full-frame crops)
+// =============================================================
+// Bee detections are produced in the Stage 1 model input coordinate system
+// (EI_CLASSIFIER_INPUT_WIDTH x EI_CLASSIFIER_INPUT_HEIGHT).
+//
+// However, crops are extracted from the *original* full-resolution frame
+// (SXGA RGB buffer) to preserve detail for Stage 2 (varroa).
+//
+// Mapping approach:
+//   - ei_calc_crop_map() reconstructs the "center-crop window" EI uses when
+//     resizing the full frame to the Stage 1 input. It outputs:
+//       crop_x, crop_y, crop_w, crop_h, scale_x, scale_y
+//
+//   - For each detected bee center (cx,cy) in Stage 1 coordinates:
+//       full_x = crop_x + cx * scale_x
+//       full_y = crop_y + cy * scale_y
+//
+// Crop extraction:
+//   - Extract a fixed CROP_SIZE x CROP_SIZE patch (default 160x160) around
+//     (full_x, full_y), clamped to image boundaries.
+//   - Encode crop to JPEG and save under /crops/boot_xxxxxx/
+//
+// Output bookkeeping:
+//   - g_crop_meta[] stores the crop path for downstream Stage 2 processing.
+// =============================================================
+
+
 static void save_crops() {
   if (!sd_writes_enabled()) { sdlog_printf("CROPS skip (saving disabled)\n"); reset_crop_meta(); return; }
   reset_crop_meta();
@@ -992,6 +1083,16 @@ static uint32_t run_varroa_on_one_crop_and_count(const char* crop_path) {
     return 0;
   }
 
+// =============================================================
+// PREPROCESSING (Stage 2 input generation)
+// =============================================================
+// Each crop is decoded from JPEG -> RGB, then resized to the varroa model
+// input dimensions (VAR_W x VAR_H) using crop_and_interpolate_rgb888().
+//
+// Result:
+//   - g_var_snapshot_buf becomes the Stage 2 model input image.
+// =============================================================
+
   ei::image::processing::crop_and_interpolate_rgb888(
     src_rgb, sw, sh,
     g_var_snapshot_buf, VAR_W, VAR_H
@@ -1095,6 +1196,25 @@ bool ei_camera_init(void) {
   return true;
 }
 
+// =============================================================
+// PREPROCESSING (Stage 1 input generation)
+// =============================================================
+// Camera returns a JPEG-compressed SXGA frame (1280x1024).
+// Steps:
+//   1) Acquire JPEG frame: esp_camera_fb_get()
+//   2) Optionally archive raw JPEG to SD (/frames/boot_xxxxxx/NNNNNN.jpg)
+//   3) Decode JPEG -> full RGB888 buffer (g_fullstage_buf)
+//   4) Convert full RGB to the model input size using Edge Impulse utility:
+//        crop_and_interpolate_rgb888(fullRGB -> snapshot_buf)
+//      This matches EI's expected "center-crop + resize" behavior for inference.
+//
+// Result:
+//   - snapshot_buf contains RGB888 image sized exactly to
+//     EI_CLASSIFIER_INPUT_WIDTH x EI_CLASSIFIER_INPUT_HEIGHT,
+//     used as the Stage 1 model input.
+// =============================================================
+
+
 bool ei_camera_capture(uint32_t img_width, uint32_t img_height, uint8_t *out_buf) {
   if (!is_initialised) { sdlog_printf("ERR camera not initialized\n"); return false; }
 
@@ -1131,9 +1251,48 @@ static int ei_camera_get_data(size_t offset, size_t length, float *out_ptr) {
   return 0;
 }
 
-// ================================
-// One inference cycle (bee -> crops -> varroa -> counters)
-// ================================
+// =============================================================
+// INFERENCE LOGIC (One full cycle: Bee -> Crops -> Varroa -> Counters)
+// =============================================================
+// This function executes one timed cycle (triggered every INFER_PERIOD_MS):
+//
+// 1) Capture + Stage 1 preprocessing:
+//    - ei_camera_capture() archives full JPEG + produces snapshot_buf resized for EI.
+//
+// 2) Stage 1 inference (bee detector):
+//    - run_classifier(signal, result)
+//    - Filter detections using UI_THRESH
+//    - Log detections to SD log
+//    - Save a Stage-1 overlay image with center markers (/bee_overlays)
+//
+// 3) Metadata export (bridge between stages):
+//    - Write centers file (/frames/.../NNNNNN.txt): bboxIndex, cx, cy, score, label
+//
+// 4) Crop generation from full-resolution image:
+//    - Re-map Stage 1 center coordinates back to full frame via ei_calc_crop_map()
+//    - Extract fixed-size crops (160x160) and save under /crops
+//
+// 5) Stage 2 inference (varroa detector on each crop):
+//    - For each saved crop:
+//        decode JPEG -> RGB
+//        resize -> (VAR_W x VAR_H)
+//        process_impulse(ei_varroa_impulse, ...)
+//    - Count varroa detections using VAR_THRESH
+//    - If mites found: save overlay under /overlays/.../mite
+//      Else: copy crop under /overlays/.../no_mite
+//
+// 6) Update metrics + alerts:
+//    - g_total_bees  += bees_this
+//    - g_total_mites += mites_this
+//    - avg_weighted = 100 * total_mites / total_bees
+//    - Update LED status based on avg_weighted threshold
+//    - Finalize a "round" when g_round_bees reaches TARGET_BEES_PER_ROUND
+//
+// UI responsiveness:
+//    - web_pump() is called between steps; should_abort() exits early if the
+//      UI disables inference mid-cycle.
+// =============================================================
+
 static void run_inference_once() {
   web_pump();
   if (should_abort()) return;
