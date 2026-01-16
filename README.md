@@ -2,13 +2,115 @@
 
 This repository contains an Arduino sketch (`final_clean/final_clean.ino`) that runs an Edge Impulse image pipeline on an **ESP32-S3-N16R8** camera module with an **OV2640** sensor, logs results to microSD, and serves a lightweight Wi-Fi web UI from the device.
 
-## Hardware requirements
+## Description
+
+This project implements a two-stage on-device TinyML vision pipeline for monitoring *Varroa destructor* mites on honey bees using an ESP32-S3-CAM + OV2640 camera. The system runs fully offline on the microcontroller: it captures images, performs inference locally, logs results to microSD, and provides user feedback via a Web UI + NeoPixel LED.
+
+## Table of contents
+
+* [Features](#features)
+* [Motivation / Background](#motivation--background)
+* [FOMO Model Training (Edge Impulse)](#fomo-model-training-edge-impulse)
+* [System Overview (Two-Stage Inference)](#system-overview-two-stage-inference)
+* [Hardware & Wiring](#hardware--wiring)
+* [Installation](#installation)
+* [Usage](#usage)
+* [Results](#results)
+* [Limitations / Known Issues](#limitations--known-issues)
+* [Contributing](#contributing)
+* [Authors / Acknowledgments](#authors--acknowledgments)
+* [License](#license)
+* [Contact / Support](#contact--support)
+
+## Features
+
+* Two-stage inference:
+  * Stage 1: Bee detection on the full frame (FOMO model).
+  * Stage 2: Varroa detection on per-bee crops (second impulse).
+* Multi-impulse Arduino deployment (Single SDK + Dual Impulses) to avoid linker conflicts, using explicit impulse handles:
+  * `ei_bee_impulse()` and `ei_varroa_impulse()`.
+* Runtime inference routing via `process_impulse()` with the chosen impulse handle (instead of relying on default `run_classifier()` macros).
+* Dynamic input handling (different model input sizes) by avoiding ambiguous global macros and resizing/cropping based on the active impulse metadata.
+* SD logging + visual audit trail:
+  * Saves raw frames as timestamped JPEGs.
+  * Saves overlay/annotated frames and crops.
+  * Appends log entries with counts/confidences.
+* Infestation metric + alerting:
+  * Computes cumulative infestation percentage as a weighted metric (mites / bees).
+  * NeoPixel LED feedback (green normal, red high infestation).
+* Web UI control over Wi-Fi for monitoring and toggling inference/saving.
+
+## Motivation / Background
+
+The project targets a low-cost, accessible monitoring approach for small-scale beekeepers, prioritizing offline inference (privacy, low latency, remote operation). Varroa mites are a major threat to colonies, and continuous monitoring is difficult with manual methods; this work explores embedded detection directly on microcontroller hardware.
+
+## FOMO Model Training (Edge Impulse)
+
+Backbone: MobileNetV2 (chosen for efficiency on microcontrollers).
+
+Bee detector (FOMO):
+
+* Width multiplier: 0.1
+* Epochs: 30
+* Learning rate: 0.01
+* Cut-point: block-6-expand-relu
+* Input resolution: 320×320
+* Squash: enabled (reduce size / memory footprint)
+
+Varroa detector (FOMO):
+
+* Motivation: mites are very small and low contrast, requiring a more expressive backbone.
+* Width multiplier: 0.35
+* Epochs: 60
+* Learning rate: 0.01
+* Cut-point: block-6-expand-relu
+* Input resolution: 160×160
+* FOMO filters: 16
+* Two-stage filtering enabled for stability/accuracy
+
+## System Overview (Two-Stage Inference)
+
+Stage 1 — Bee detection (full frame):
+
+* Capture full-resolution frame as JPEG (SXGA 1280×1024), decode to RGB, resize to the bee model input, then run the bee impulse.
+* Detections filtered by `BEE_THRESH = 0.50`.
+
+Stage 2 — Varroa detection (per-bee crops):
+
+* Map bee-center coordinates back into full-resolution space, extract fixed-size crops (`CROP_SIZE = 160`), resize to varroa input (160×160), then run the varroa impulse.
+* Detections filtered by `VAR_THRESH = 0.50`.
+
+Scheduler & controls:
+
+* A periodic scheduler runs one full cycle every `INFER_PERIOD_MS` (default 5000 ms).
+* Web UI can pause/stop inference (`g_infer_enabled`) and toggle SD writes (`g_save_enabled`).
+
+## Hardware & Wiring
+
+### Hardware requirements
 
 * **ESP32-S3-N16R8** camera module (PSRAM required).
 * **OV2640** camera module.
 * **microSD card** (formatted FAT32).
 * **NeoPixel-compatible status LED** (1x RGB LED).
 * Power supply and wiring per the pin map below.
+
+### Core components (from report BOM)
+
+* ESP32-S3-WROOM (N16R8): 16MB flash + 8MB PSRAM required for the 2-stage pipeline and buffering snapshots.
+* OV2640 (2MP) camera with manual-focus lens (to focus at ~10–15 cm).
+* microSD 8GB required (stores full-resolution frames for cropping + logs).
+* WS2812B (NeoPixel) RGB LED for health/alert status.
+
+### Wiring (NeoPixel)
+
+* 5V → WS2812B VCC
+* GND → WS2812B GND
+* GPIO 21 → WS2812B DIN via 330Ω series resistor
+
+### Storage / IO configuration
+
+* microSD is interfaced via SDMMC (4-bit mode) for high-speed writes (raw frames, overlays, crops per cycle).
 
 ## Pin map (from firmware)
 
@@ -49,7 +151,14 @@ The firmware pins are defined in `final_clean/src/app_config.h`. Update these if
 | --- | --- |
 | LED Data | 21 |
 
-## Arduino IDE setup
+## Installation
+
+The report focuses on the deployment architecture rather than a step-by-step Arduino setup. The key required setup elements below are what’s explicitly stated in the report.
+
+### Prerequisites
+
+* Arduino IDE workflow on ESP32-S3.
+* A merged Edge Impulse Arduino library using the Single SDK + Dual Impulse structure (see next section).
 
 ### 1) Install the ESP32 board package
 
@@ -65,6 +174,13 @@ The sketch relies on:
 * `img_converters.h` (from the ESP32 camera support)
 
 These are part of the Arduino-ESP32 core.
+
+### Library integration (Single SDK + Dual Impulses)
+
+* Keep one `edge-impulse-sdk/` directory shared by both models.
+* Merge both projects’ `model-parameters/` and `tflite-model/` into one library (preserve unique model blob headers).
+* Combine both projects’ `model_variables.h` contents (unique project IDs allow coexistence).
+* Expose two explicit impulse handles: `ei_bee_impulse()` and `ei_varroa_impulse()`.
 
 ### 2) Install required libraries
 
@@ -91,7 +207,7 @@ In **Tools** menu (Arduino IDE):
 2. Select the correct serial port.
 3. Upload.
 
-## Running the project
+## Usage
 
 * On boot, the device mounts the SD card and starts a Wi-Fi AP.
 * **Wi-Fi SSID:** `ESP32-SD`
@@ -103,6 +219,30 @@ The web UI is served from the device and shows:
 * Current inference state (enabled/disabled)
 * Rolling counts of bees vs. mites
 * SD-backed image browsing APIs
+
+### Using the web UI
+
+1. Connect your phone or laptop to the `ESP32-SD` Wi-Fi network.
+2. Open a browser and visit **http://192.168.1.4** (default AP address).
+3. Click **Start** to begin inferencing.
+4. Click **Stop** to stop inferencing and browse the latest saved images of detected bees and varroa mites.
+
+### What happens each inference cycle
+
+* Capture frame (JPEG SXGA), decode to RGB.
+* Resize/crop to bee input and run Stage 1.
+* For each detected bee, crop 160×160 from full-res and run Stage 2.
+* Log images + results to SD; update infestation metric; update LED; serve updated stats in Web UI.
+
+### Outputs saved to SD
+
+* Timestamped raw JPEG frames (audit trail).
+* Overlay/annotated frames (bee boxes, mite indicators).
+* Crops and mite overlays (for review).
+
+### Alerts
+
+* LED turns red when infestation exceeds 10% (chosen as a pragmatic threshold given current model behavior).
 
 ## Web UI screenshots
 
@@ -121,7 +261,49 @@ The web UI is served from the device and shows:
 * `libraries/merge_b.zip`: Edge Impulse library export.
 * `merger/`: helper Python code used to merge and produce `merge_b.zip`.
 
+## Results
+
+Offline (test set) training metrics:
+
+* Bee detector: Precision 0.96, Recall 0.94, F1 0.95
+* Varroa detector: Precision 0.85, Recall 0.94, F1 0.89
+
+On-device test (ESP32-S3):
+
+* Varroa detection (40 samples visual count): TP=47, FP=14, FN=46 → Precision 0.77, Recall 0.51, F1 0.61
+
+## Limitations / Known Issues
+
+* Dataset limitation (real infestation scarcity): field collection missed infestation periods; mites not always present and seasonal.
+* Synthetic / public dataset issues: reliance on edited “infested” samples and public datasets, with limited realism and annotation quality issues (miss-labels, cut-off/tightness problems).
+* Training limitation (Edge Impulse free tier): developer plan training jobs limited to 60 minutes, forcing smaller training sets (~1000–1500 images).
+* Evaluation limitation: many tests were done using photos of test images on a computer screen or by directly passing images, and real-world testing was constrained.
+* Performance gap (training vs on-device): Varroa model drops from F1 0.89 (offline) to 0.61 on-device.
+
+## Contributing
+
+Contributions are welcome. Please open an issue or pull request describing the proposed change.
+
+## Authors / Acknowledgments
+
+This project was produced as part of Group 3’s final report work.
+
+## License
+
+License information has not been provided yet. Please add a license file if you plan to redistribute.
+
+## Contact / Support
+
+Create an issue in this repository for questions and bug reports, or contact: 10422051@student.vgu.edu.vn
+
 ## Notes
 
 * The camera configuration uses `FRAMESIZE_SXGA` (1280x1024) and saves JPEG frames to the SD card.
 * NeoPixel status LED: green when infestation rate ≤ threshold, red above threshold.
+
+## Dataset and Edge Impulse models
+
+* Dataset (Google Drive): https://drive.google.com/drive/folders/1YUVjjQaT-wlv3pP-dXyxlRmlFddlCYIB?usp=drive_link
+* Edge Impulse models:
+  * https://studio.edgeimpulse.com/public/872791/live
+  * https://studio.edgeimpulse.com/public/874563/live
