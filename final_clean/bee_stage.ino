@@ -17,7 +17,7 @@ static void draw_center_boxes(uint8_t* img, int W, int H, const ei_impulse_resul
 
   for (uint32_t k = 0; k < res.bounding_boxes_count; k++) {
     auto &bb = res.bounding_boxes[k];
-    if (bb.value < UI_THRESH) continue;
+    if (bb.value < BEE_THRESH) continue;
 
     const int cx = (int)lrintf(bb.x + bb.width  * 0.5f);
     const int cy = (int)lrintf(bb.y + bb.height * 0.5f);
@@ -42,7 +42,7 @@ uint32_t bee_count_detections(const ei_impulse_result_t& res) {
   uint32_t n = 0;
   for (uint32_t i = 0; i < res.bounding_boxes_count; ++i) {
     const auto& bb = res.bounding_boxes[i];
-    if (bb.value >= UI_THRESH && bb.width > 0 && bb.height > 0) n++;
+    if (bb.value >= BEE_THRESH && bb.width > 0 && bb.height > 0) n++;
   }
   return n;
 #else
@@ -53,10 +53,10 @@ uint32_t bee_count_detections(const ei_impulse_result_t& res) {
 
 void bee_log_detections(const ei_impulse_result_t& res) {
 #if EI_CLASSIFIER_OBJECT_DETECTION == 1
-  sdlog_printf("BEE_DETECTIONS count=%lu (>=%.2f)\n", (unsigned long)res.bounding_boxes_count, UI_THRESH);
+  sdlog_printf("BEE_DETECTIONS count=%lu (>=%.2f)\n", (unsigned long)res.bounding_boxes_count, BEE_THRESH);
   for (uint32_t i = 0; i < res.bounding_boxes_count; ++i) {
     const auto& bb = res.bounding_boxes[i];
-    if (bb.value < UI_THRESH) continue;
+    if (bb.value < BEE_THRESH) continue;
     sdlog_printf("  bee_bb[%lu] label=%s score=%.3f x=%.1f y=%.1f w=%.1f h=%.1f\n",
                  (unsigned long)i, bb.label, bb.value,
                  (double)bb.x, (double)bb.y, (double)bb.width, (double)bb.height);
@@ -98,7 +98,7 @@ bool bee_write_centers_txt(const ei_impulse_result_t& res) {
 #if EI_CLASSIFIER_OBJECT_DETECTION == 1
   for (uint32_t i=0; i<res.bounding_boxes_count; ++i) {
     auto &bb = res.bounding_boxes[i];
-    if (bb.value < UI_THRESH) continue;
+    if (bb.value < BEE_THRESH) continue;
     float cx = bb.x + bb.width*0.5f;
     float cy = bb.y + bb.height*0.5f;
     char lab[12]; sanitize_label(bb.label, lab);

@@ -41,7 +41,7 @@ static constexpr int MAX_CROPS = 50;
 // ================================
 // Thresholds / Timing
 // ================================
-static constexpr float UI_THRESH      = 0.35f;
+static constexpr float BEE_THRESH      = 0.35f;
 static constexpr float VAR_THRESH     = 0.50f;
 static constexpr int   DROPPED_FRAMES = 10;
 
