@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 import re
 from pathlib import Path
 
@@ -53,6 +52,8 @@ def main(bee_path: Path, varroa_path: Path, out_path: Path):
     merged.append("/* ===== EXPLICIT HANDLE ALIASES (NON-COLLIDING) ===== */\n")
     merged.append(f"static inline ei_impulse_handle_t& ei_bee_impulse = impulse_handle_{BEE_ID}_1;\n")
     merged.append(f"static inline ei_impulse_handle_t& ei_varroa_impulse = impulse_handle_{VARROA_ID}_1;\n\n")
+    #static ei_impulse_handle_t& ei_bee_impulse()   { return impulse_handle_{BEE_ID}_{depend on how it is defined in the file};}
+    #static ei_impulse_handle_t& ei_varroa_impulse(){ return impulse_handle_{VARROA_ID}_{depend on how it is defined in the file};}
 
     merged.append("#endif // _EI_CLASSIFIER_MODEL_VARIABLES_MERGED_H_\n")
 
