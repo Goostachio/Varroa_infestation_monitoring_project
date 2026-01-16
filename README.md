@@ -13,13 +13,9 @@ This project implements a two-stage on-device TinyML vision pipeline for monitor
 * [FOMO Model Training (Edge Impulse)](#fomo-model-training-edge-impulse)
 * [System Overview (Two-Stage Inference)](#system-overview-two-stage-inference)
 * [Hardware & Wiring](#hardware--wiring)
-* [Installation](#installation)
 * [Usage](#usage)
 * [Results](#results)
 * [Limitations / Known Issues](#limitations--known-issues)
-* [Contributing](#contributing)
-* [Authors / Acknowledgments](#authors--acknowledgments)
-* [License](#license)
 * [Contact / Support](#contact--support)
 
 ## Features
@@ -95,7 +91,7 @@ Scheduler & controls:
 * **NeoPixel-compatible status LED** (1x RGB LED).
 * Power supply and wiring per the pin map below.
 
-### Core components (from report BOM)
+### Core components
 
 * ESP32-S3-WROOM (N16R8): 16MB flash + 8MB PSRAM required for the 2-stage pipeline and buffering snapshots.
 * OV2640 (2MP) camera with manual-focus lens (to focus at ~10–15 cm).
@@ -110,8 +106,7 @@ Scheduler & controls:
 
 ### Storage / IO configuration
 
-* microSD is interfaced via SDMMC (4-bit mode) for high-speed writes (raw frames, overlays, crops per cycle).
-
+* microSD is interfaced via SDMMC (1-bit mode).
 ## Pin map (from firmware)
 
 The firmware pins are defined in `final_clean/src/app_config.h`. Update these if your wiring differs.
@@ -150,10 +145,6 @@ The firmware pins are defined in `final_clean/src/app_config.h`. Update these if
 | Signal | GPIO |
 | --- | --- |
 | LED Data | 21 |
-
-## Installation
-
-The report focuses on the deployment architecture rather than a step-by-step Arduino setup. The key required setup elements below are what’s explicitly stated in the report.
 
 ### Prerequisites
 
@@ -223,7 +214,7 @@ The web UI is served from the device and shows:
 ### Using the web UI
 
 1. Connect your phone or laptop to the `ESP32-SD` Wi-Fi network.
-2. Open a browser and visit **http://192.168.1.4** (default AP address).
+2. Open a browser and visit default assigned IP.
 3. Click **Start** to begin inferencing.
 4. Click **Stop** to stop inferencing and browse the latest saved images of detected bees and varroa mites.
 
@@ -242,7 +233,7 @@ The web UI is served from the device and shows:
 
 ### Alerts
 
-* LED turns red when infestation exceeds 10% (chosen as a pragmatic threshold given current model behavior).
+* LED turns red when infestation exceeds 10%.
 
 ## Web UI screenshots
 
@@ -279,18 +270,6 @@ On-device test (ESP32-S3):
 * Training limitation (Edge Impulse free tier): developer plan training jobs limited to 60 minutes, forcing smaller training sets (~1000–1500 images).
 * Evaluation limitation: many tests were done using photos of test images on a computer screen or by directly passing images, and real-world testing was constrained.
 * Performance gap (training vs on-device): Varroa model drops from F1 0.89 (offline) to 0.61 on-device.
-
-## Contributing
-
-Contributions are welcome. Please open an issue or pull request describing the proposed change.
-
-## Authors / Acknowledgments
-
-This project was produced as part of Group 3’s final report work.
-
-## License
-
-License information has not been provided yet. Please add a license file if you plan to redistribute.
 
 ## Contact / Support
 
