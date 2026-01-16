@@ -53,11 +53,16 @@ The firmware pins are defined in `final_clean/src/app_config.h`. Update these if
 
 ### 1) Install the ESP32 board package
 
-Install **Espressif ESP32** support in Arduino IDE (Boards Manager). The sketch relies on:
+Install **Espressif ESP32** support in Arduino IDE (Boards Manager). Use the board manager URL below:
+
+* `https://espressif.github.io/arduino-esp32/package_esp32_index.json`
+
+The sketch relies on:
 
 * `WiFi.h`, `WebServer.h`
 * `esp_camera.h`
 * `FS.h`, `SD_MMC.h`
+* `img_converters.h` (from the ESP32 camera support)
 
 These are part of the Arduino-ESP32 core.
 
@@ -76,9 +81,9 @@ To install the Edge Impulse library in Arduino IDE:
 In **Tools** menu (Arduino IDE):
 
 * **Board:** ESP32S3 Dev Module (or your ESP32-S3-N16R8 variant)
-* **PSRAM:** Enabled (required)
-* **Flash Size:** 16MB (or match your module)
-* **Partition Scheme:** Defaults are usually fine unless you need extra space
+* **PSRAM:** OPI PSRAM (required)
+* **Flash Size:** 16MB
+* **Partition Scheme:** Huge APP (required)
 
 ### 4) Open and upload
 
@@ -101,24 +106,22 @@ The web UI is served from the device and shows:
 
 ## Web UI screenshots
 
-> **TODO:** Add screenshots of the web UI once available.
->
-> Suggested path: `docs/images/web-ui-1.png`, `docs/images/web-ui-2.png`
+![Web UI showing bee detection](images/bee.png)
+![Web UI showing varroa mite detection](images/mite.png)
+![Web UI showing no-mite detection](images/no-mite.png)
 
 ## Wiring diagram
 
-> **TODO:** Add your wiring diagram image here.
->
-> Suggested path: `docs/images/wiring.png`
+![Hardware wiring diagram](images/wiring.png)
 
 ## Project structure (high level)
 
-* `final_clean/final_clean.ino`: main Arduino sketch.
+* `final_clean/`: Arduino sketch folder (open `final_clean/final_clean.ino` to run inference).
 * `final_clean/src/`: camera, SD card, UI, and pipeline logic.
 * `libraries/merge_b.zip`: Edge Impulse library export.
+* `merger/`: helper Python code used to merge and produce `merge_b.zip`.
 
 ## Notes
 
 * The camera configuration uses `FRAMESIZE_SXGA` (1280x1024) and saves JPEG frames to the SD card.
 * NeoPixel status LED: green when infestation rate ≤ threshold, red above threshold.
-
