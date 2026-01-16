@@ -143,7 +143,6 @@ static void handle_boots() {
   server.sendContent("]");
   dir.close();
 
-  // CRITICAL: finalize chunked transfer so fetch() doesn't "Load failed"
   server.sendContent("");
 }
 

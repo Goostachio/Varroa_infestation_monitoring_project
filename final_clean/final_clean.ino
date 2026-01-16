@@ -13,7 +13,7 @@
 
 void setup() {
   Serial.begin(115200);
-  Serial.println("EI Inferencing - modular skeleton (SD + UI + pipeline)");
+  Serial.println("EI Inferencing");
 
   led_init();
 
